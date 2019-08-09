@@ -36,6 +36,8 @@ def get_aggregate(symbol, interval, start, end, api_key):
         }))
         reponse_dict = response.json()
         finished = True
+        if reponse_dict['results'] is None:
+            break
         for result in reponse_dict['results']:
             timestamp = result['t']
             # Deduplicate results
