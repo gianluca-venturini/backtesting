@@ -1,5 +1,6 @@
 import requests
 from datetime import datetime
+from pandas import DataFrame
 
 MAX_PAGES = 1000
 
@@ -48,4 +49,4 @@ def get_aggregate(symbol, interval, start, end, api_key):
         if len(reponse_dict['results']) > 0:
             end = datetime.fromtimestamp(reponse_dict['results'][0]['t'] / 1000.0)
         page += 1
-    return results
+    return DataFrame(results)
