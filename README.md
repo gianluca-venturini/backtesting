@@ -1,5 +1,27 @@
 # Simple backtesting system
 
+### Preparing dev environment
+
+Make sure to have installed Python3.
+
+```
+pip3 install pipenv
+pipenv install
+```
+
+### Write tests
+
+```
+pipenv run test
+```
+
+### Install new package
+
+```
+pipenv install <package_name>
+pipenv lock
+```
+
 ### Build the container
 
 `docker build . -t gianluca91/backtesting:latest`
