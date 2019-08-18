@@ -13,24 +13,24 @@ class SimpleExecutor:
     # {
     #   "id": "904837e3-3b76-47ec-b432-046db621571b",
     #   "client_order_id": "904837e3-3b76-47ec-b432-046db621571b",
-    #   "created_at": "2018-10-05T05:48:59Z",
-    #   "updated_at": "2018-10-05T05:48:59Z",
-    #   "submitted_at": "2018-10-05T05:48:59Z",
-    #   "filled_at": "2018-10-05T05:48:59Z",
-    #   "expired_at": "2018-10-05T05:48:59Z",
-    #   "canceled_at": "2018-10-05T05:48:59Z",
-    #   "failed_at": "2018-10-05T05:48:59Z",
+    #   "created_at": datetime("2018-10-05T05:48:59Z"),
+    #   "updated_at": datetime("2018-10-05T05:48:59Z"),
+    #   "submitted_at": datetime("2018-10-05T05:48:59Z"),
+    #   "filled_at": datetime("2018-10-05T05:48:59Z"),
+    #   "expired_at": datetime("2018-10-05T05:48:59Z"),
+    #   "canceled_at": datetime("2018-10-05T05:48:59Z"),
+    #   "failed_at": datetime("2018-10-05T05:48:59Z"),
     #   "asset_id": "904837e3-3b76-47ec-b432-046db621571b",
     #   "symbol": "AAPL",
     #   "asset_class": "us_equity",
-    #   "qty": "15",
-    #   "filled_qty": "0",
+    #   "qty": 15,
+    #   "filled_qty": 0,
     #   "type": "market",
     #   "side": "buy",
     #   "time_in_force": "day",
-    #   "limit_price": "107.00",
-    #   "stop_price": "106.00",
-    #   "filled_avg_price": "106.00",
+    #   "limit_price": 107.00,
+    #   "stop_price": 106.00,
+    #   "filled_avg_price": 106.00,
     #   "status": "accepted",
     #   "extended_hours": false
     # }
@@ -45,8 +45,14 @@ class SimpleExecutor:
 
     def request_new_order(self, time, symbol, qty, side, type, time_in_force, limit_price, stop_price, extended_hours, client_order_id):
         assert side in ('buy', 'sell')
+        if side in ('sell'):
+            raise NotImplementedError()
         assert type in ('market', 'limit', 'stop', 'stop_limit')
+        if type in ('limit', 'stop', 'stop_limit'):
+            raise NotImplementedError()
         assert time_in_force in ('day', 'gtc', 'opg', 'cls', 'ioc', 'fok')
+        if time_in_force in ('opg', 'cls', 'ioc', 'fok'):
+            raise NotImplementedError()
 
         order_dict = {
             'symbol': symbol,
@@ -71,39 +77,45 @@ class SimpleExecutor:
 
         self.state['orders'].append(order_dict)
 
-    def check_order_execution(self, time, interval_data):
-        pass
-        # low = float(row['l'])
-        # high = float(row['h'])
-        # for order in self.state['orders']:
-        #     if order['status'] == 'open':
-        #         if order['type'] == 'market':
-        #             if order['side'] == 'buy':
-        #                 execute_order(time, order, high)
-        #             if order['side'] == 'sell':
-        #                 execute_order(time, order, low)
-        #         if order['type'] == 'limit':
-        #             if order['side'] == 'buy' and order['limit_price'] > low:
-        #                 execute_order(time, order, order['limit_price'])
-        #             if order['side'] == 'sell' and order['limit_price'] < high:
-        #                 execute_order(time, order, order['limit_price'])
+    def check_orders_execution(self, time, interval_data):
+        for order in self.state['orders']:
+            self.check_order_execution(time, interval_data, order)
+
+    def check_order_execution(self, time, interval_data, order):
+        high = interval_data['h'][order['symbol']]
+        low = interval_data['l'][order['symbol']]
+        if order['status'] == 'open':
+            elapsed = time - order['created_at']
+            if order['time_in_force'] == 'day' and elapsed.days >= 1:
+                self.expire_order(time, order)
+                return
+            if order['type'] == 'market':
+                if order['side'] == 'buy':
+                    self.execute_order(time, order, high)
+                if order['side'] == 'sell':
+                    self.execute_order(time, order, low)
+            if order['type'] == 'limit':
+                if order['side'] == 'buy' and order['limit_price'] > low:
+                    self.execute_order(time, order, order['limit_price'])
+                if order['side'] == 'sell' and order['limit_price'] < high:
+                    self.execute_order(time, order, order['limit_price'])
 
     def execute_order(self, time, order, price):
         print('Execute order {client_order_id} at {price}'.format(
             **order, price=price))
         order['status'] = 'filled'
         order['filled_avg_price'] = price
-        order["filled_at"] = time
-        order["filled_quantity"] = order["qty"]
+        order['filled_at'] = time
+        order['filled_qty'] = order['qty']
 
         if order['side'] == 'buy':
-            self.state['cash'] -= price * order["qty"]
-            self.state['portfolio'][order['symbol']] += order["qty"]
+            self.state['cash'] -= price * order['qty']
+            self.state['portfolio'][order['symbol']] += order['qty']
         if order['side'] == 'sell':
-            self.state['cash'] += price * order["qty"]
-            self.state['portfolio'][order['symbol']] -= order["qty"]
+            self.state['cash'] += price * order['qty']
+            self.state['portfolio'][order['symbol']] -= order['qty']
 
-        print('Cash remaining {cash}'.format(**state))
+        print('Cash remaining {cash}'.format(**self.state))
 
         if self.state['cash'] < 0:
             raise Exception('Cash is below zero')
@@ -111,11 +123,11 @@ class SimpleExecutor:
             raise Exception('Symbol {symbol} is below zero {current}'.format(
                 **order, current=self.state['portfolio'][order['symbol']]))
 
-    def cancel_order(self, time, order, price):
+    def cancel_order(self, time, order):
         order['status'] = 'canceled'
         order['canceled_at'] = time
 
-    def expire_order(self, time, order, price):
+    def expire_order(self, time, order):
         order['status'] = 'expired'
         order['expired_at'] = time
 
@@ -141,8 +153,6 @@ class SimpleExecutor:
 
         timestamp_start = calendar.timegm(start.timetuple())
         timestamp_end = calendar.timegm(end.timetuple())
-        print(timestamp_start, timestamp_end)
-        print(data.index)
         # bisect_right returns the index after the found element
         index_start = bisect_right(data.index, timestamp_start * 1000) - 1
         index_end = bisect_left(data.index, timestamp_end * 1000)
@@ -150,7 +160,6 @@ class SimpleExecutor:
             index_end -= 1
         assert index_start >= 0
         assert index_end >= -1
-        print(index_start, index_end)
         return data[index_start:index_end + 1]
 
     def execute_strategy(self, strategy, data, start, end, initial_cash=100000, plot=False):
@@ -171,7 +180,7 @@ class SimpleExecutor:
             latest_interval = get_values_at_timestamp(data, timestamp_ms)
             assert latest_interval is not None
 
-            self.check_order_execution(utc_t, latest_interval)
+            self.check_orders_execution(utc_t, latest_interval)
 
             if len(filtered_data) > 0:
                 strategy(utc_t, lambda *args, **kw: self.request_new_order(utc_t,

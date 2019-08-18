@@ -56,17 +56,48 @@ def get_data():
     return data_pivoted
 
 
+def get_order(created_at, submitted_at=None, updated_at=None, qty=10, type='market', side='buy', time_in_force='gtc', limit_price=107.0, stop_price=106.0):
+    if submitted_at is None:
+        submitted_at = created_at
+    if updated_at is None:
+        updated_at = created_at
+    return {
+        "id": "id0",
+        "client_order_id": "id1",
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "submitted_at": submitted_at,
+        "filled_at": None,
+        "expired_at": None,
+        "canceled_at": None,
+        "failed_at": None,
+        "asset_id": "id2",
+        "symbol": "SYMBOL1",
+        "asset_class": "us_equity",
+        "qty": qty,
+        "filled_qty": 0,
+        "type": type,
+        "side": side,
+        "time_in_force": time_in_force,
+        "limit_price": limit_price,
+        "stop_price": stop_price,
+        "filled_avg_price": 106.0,
+        "status": "open",
+        "extended_hours": False
+    }
+
+
 def test_request_new_order():
     executor = SimpleExecutor()
     time = datetime(2019, 1, 1)
     executor.request_new_order(
-        time, 'SYMBOL', 12, 'buy', 'stop', 'day', 10, None, True, 'id123')
+        time, 'SYMBOL', 12, 'buy', 'market', 'day', 10, None, True, 'id123')
     assert len(executor.state['orders']) == 1
     assert {
         'symbol': 'SYMBOL',
         'qty': 12,
         'side': 'buy',
-        'type': 'stop',
+        'type': 'market',
         'time_in_force': 'day',
         'limit_price': 10,
         'stop_price': None,
@@ -82,7 +113,7 @@ def test_request_new_order():
 def test_execute_strategy_request_new_order():
     executor = SimpleExecutor()
     start = datetime(2019, 1, 1, tzinfo=utc)
-    end = datetime(2019, 2, 1, tzinfo=utc)
+    end = datetime(2019, 1, 2, tzinfo=utc)
     data = get_data()
 
     def mock_strategy(now, request_new_order, data, cash):
@@ -97,7 +128,7 @@ def test_execute_strategy_request_new_order():
         # Makes sure data doesn't contain anything in the future. The equal
         # is excluded because the ts of the data is floored with the interval starting ts
         assert datetime.fromtimestamp(data.index[-1] / 1000, utc) < now
-        request_new_order('SYMBOL1', 12, 'buy', 'stop',
+        request_new_order('SYMBOL1', 12, 'buy', 'market',
                           'day', 10, None, True, 'id123')
 
     assert len(executor.state['orders']) == 0
@@ -108,6 +139,84 @@ def test_execute_strategy_request_new_order():
         end,
         initial_cash=100)
     assert len(executor.state['orders']) == 1
+
+
+# def test_execute_strategy_check_order_execution():
+#     executor = SimpleExecutor()
+#     start = datetime(2019, 1, 1, tzinfo=utc)
+#     end = datetime(2019, 1, 2, tzinfo=utc)
+#     data = get_data()
+
+#     def mock_strategy(now, request_new_order, data, cash):
+#         pass
+
+#     executor.state['orders'] = get_orders()
+#     assert len(executor.state['orders']) == 1
+#     assert executor.state['orders'][0]['status'] == 'open'
+#     executor.execute_strategy(
+#         mock_strategy,
+#         data,
+#         start,
+#         end,
+#         initial_cash=100)
+#     assert executor.state['orders'][0]['status'] == 'filled'
+
+def test_check_orders_execution():
+    executor = SimpleExecutor()
+
+    executor.state['cash'] = 1000
+    data = get_data()
+
+    time = datetime(2019, 1, 2, tzinfo=utc)
+    timestamp_ms = calendar.timegm(time.timetuple()) * 1000
+    interval_data = get_values_at_timestamp(data, timestamp_ms)
+
+    order_time = datetime(2019, 1, 1, tzinfo=utc)
+
+    executor.state['orders'] = [get_order(order_time, type='market')]
+    assert len(executor.state['orders']) == 1
+    assert executor.state['orders'][0]['status'] == 'open'
+    executor.check_orders_execution(time, interval_data)
+    assert executor.state['orders'][0]['status'] == 'filled'
+
+def test_check_order_execution():
+    executor = SimpleExecutor()
+
+    data = get_data()
+
+    time1 = datetime(2019, 1, 2, tzinfo=utc)
+    time2 = datetime(2019, 1, 3, tzinfo=utc)
+    timestamp_ms = calendar.timegm(time1.timetuple()) * 1000
+    interval_data = get_values_at_timestamp(data, timestamp_ms)
+
+    # Market order filled same day
+    order_time = time1
+    order = get_order(order_time, type='market', side='buy', time_in_force='day', qty=10)
+    executor.state['cash'] = 1000
+    assert order['status'] == 'open'
+    executor.check_order_execution(time1, interval_data, order)
+    assert order['status'] == 'filled'
+    assert order['filled_qty'] == order['qty']
+    assert executor.state['cash'] == 1000 - 10 * 15
+
+    # Market order filled following day
+    order_time = time1
+    order = get_order(order_time, type='market', side='buy', time_in_force='gtc', qty=10)
+    executor.state['cash'] = 1000
+    assert order['status'] == 'open'
+    executor.check_order_execution(time2, interval_data, order)
+    assert order['status'] == 'filled'
+    assert order['filled_qty'] == order['qty']
+    assert executor.state['cash'] == 1000 - 10 * 15
+
+    # Market order expired following day
+    order_time = time1
+    order = get_order(order_time, type='market', side='buy', time_in_force='day', qty=10)
+    executor.state['cash'] = 1000
+    assert order['status'] == 'open'
+    executor.check_order_execution(time2, interval_data, order)
+    assert order['status'] == 'expired'
+    assert executor.state['cash'] == 1000
 
 
 def test_filter_data():
