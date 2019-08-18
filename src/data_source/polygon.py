@@ -49,4 +49,6 @@ def get_aggregate(symbol, interval, start, end, api_key):
         if len(reponse_dict['results']) > 0:
             end = datetime.fromtimestamp(reponse_dict['results'][0]['t'] / 1000.0)
         page += 1
-    return DataFrame(results)
+    df = DataFrame(results)
+    df['symbol'] = symbol
+    return df

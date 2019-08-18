@@ -1,8 +1,12 @@
+import calendar
 from datetime import datetime
 from pytz import timezone, utc
 from collections import defaultdict
 from pandas import DataFrame
 import matplotlib.pyplot as plt
+from bisect import bisect_left, bisect_right
+from util.dataframe_util import get_values_at_timestamp
+
 
 class SimpleExecutor:
     # Orders should follow this format
@@ -30,13 +34,14 @@ class SimpleExecutor:
     #   "status": "accepted",
     #   "extended_hours": false
     # }
-    state = {
-        # All orders
-        'orders': [],
-        # Initial cash
-        'cash': 0,
-        'portfolio': defaultdict(lambda: 0)
-    }
+    def __init__(self):
+        self.state = {
+            # All orders
+            'orders': [],
+            # Initial cash
+            'cash': 0,
+            'portfolio': defaultdict(lambda: 0)
+        }
 
     def request_new_order(self, time, symbol, qty, side, type, time_in_force, limit_price, stop_price, extended_hours, client_order_id):
         assert side in ('buy', 'sell')
@@ -60,99 +65,129 @@ class SimpleExecutor:
         }
         print('{now} New order issued {symbol} {qty}'.format(
             **order_dict,
-            now=time.astimezone(timezone('US/Eastern')).strftime("%Y-%m-%d %H:%M:%S %Z%z")
+            now=time.astimezone(timezone('US/Eastern')
+                                ).strftime("%Y-%m-%d %H:%M:%S %Z%z")
         ))
 
         self.state['orders'].append(order_dict)
 
+    def check_order_execution(self, time, interval_data):
+        pass
+        # low = float(row['l'])
+        # high = float(row['h'])
+        # for order in self.state['orders']:
+        #     if order['status'] == 'open':
+        #         if order['type'] == 'market':
+        #             if order['side'] == 'buy':
+        #                 execute_order(time, order, high)
+        #             if order['side'] == 'sell':
+        #                 execute_order(time, order, low)
+        #         if order['type'] == 'limit':
+        #             if order['side'] == 'buy' and order['limit_price'] > low:
+        #                 execute_order(time, order, order['limit_price'])
+        #             if order['side'] == 'sell' and order['limit_price'] < high:
+        #                 execute_order(time, order, order['limit_price'])
 
-    def check_order_execution(time, row):
-        low = float(row['l'])
-        high = float(row['h'])
-        for order in state['orders']:
-            if order['status'] == 'open':
-                if order['type'] == 'market':
-                    if order['side'] == 'buy':
-                        execute_order(time, order, high)
-                    if order['side'] == 'sell':
-                        execute_order(time, order, low)
-                if order['type'] == 'limit':
-                    if order['side'] == 'buy' and order['limit_price'] > low:
-                        execute_order(time, order, order['limit_price'])
-                    if order['side'] == 'sell' and order['limit_price'] < high:
-                        execute_order(time, order, order['limit_price'])
-
-
-    def execute_order(time, order, price):
-        print('Execute order {client_order_id} at {price}'.format(**order, price=price))
+    def execute_order(self, time, order, price):
+        print('Execute order {client_order_id} at {price}'.format(
+            **order, price=price))
         order['status'] = 'filled'
         order['filled_avg_price'] = price
         order["filled_at"] = time
         order["filled_quantity"] = order["qty"]
 
         if order['side'] == 'buy':
-            state['cash'] -=  price * order["qty"]
-            state['portfolio'][order['symbol']] += order["qty"]
+            self.state['cash'] -= price * order["qty"]
+            self.state['portfolio'][order['symbol']] += order["qty"]
         if order['side'] == 'sell':
-            state['cash'] +=  price * order["qty"]
-            state['portfolio'][order['symbol']] -= order["qty"]
+            self.state['cash'] += price * order["qty"]
+            self.state['portfolio'][order['symbol']] -= order["qty"]
 
         print('Cash remaining {cash}'.format(**state))
 
-        if state['cash'] < 0:
+        if self.state['cash'] < 0:
             raise Exception('Cash is below zero')
-        if state['portfolio'][order['symbol']] < 0:
-            raise Exception('Symbol {symbol} is below zero {current}'.format(**order, current=state['portfolio'][order['symbol']]))
+        if self.state['portfolio'][order['symbol']] < 0:
+            raise Exception('Symbol {symbol} is below zero {current}'.format(
+                **order, current=self.state['portfolio'][order['symbol']]))
 
-
-    def cancel_order(time, order, price):
+    def cancel_order(self, time, order, price):
         order['status'] = 'canceled'
         order['canceled_at'] = time
 
-
-    def expire_order(time, order, price):
+    def expire_order(self, time, order, price):
         order['status'] = 'expired'
         order['expired_at'] = time
 
-
-    def portfolio_value(market):
+    def portfolio_value(self, last_interval):
         high = 0
         low = 0
         open = 0
         close = 0
-        for symbol in state['portfolio']:
-            high += float(market['h']) * state['portfolio'][symbol]
-            low += float(market['l']) * state['portfolio'][symbol]
-            open += float(market['o']) * state['portfolio'][symbol]
-            close += float(market['c']) * state['portfolio'][symbol]
-        cash = state['cash']
+        for symbol in self.state['portfolio']:
+            high += last_interval['h'][symbol] * \
+                self.state['portfolio'][symbol]
+            low += last_interval['l'][symbol] * self.state['portfolio'][symbol]
+            open += last_interval['o'][symbol] * \
+                self.state['portfolio'][symbol]
+            close += last_interval['c'][symbol] * \
+                self.state['portfolio'][symbol]
+        cash = self.state['cash']
         return dict(high=high + cash, low=low + cash, open=open + cash, close=close + cash, cash=cash)
 
-
-    def execute_strategy(strategy, data, start, end, initial_cash=100000):
+    def filter_data(self, data, start, end, include_end=True):
         assert start.tzinfo is not None, 'The start date should be timezone aware'
         assert end.tzinfo is not None, 'The end date should be timezone aware'
 
-        state['cash'] = initial_cash
+        timestamp_start = calendar.timegm(start.timetuple())
+        timestamp_end = calendar.timegm(end.timetuple())
+        print(timestamp_start, timestamp_end)
+        print(data.index)
+        # bisect_right returns the index after the found element
+        index_start = bisect_right(data.index, timestamp_start * 1000) - 1
+        index_end = bisect_left(data.index, timestamp_end * 1000)
+        if include_end is False and data.index[index_end] / 1000 == timestamp_end:
+            index_end -= 1
+        assert index_start >= 0
+        assert index_end >= -1
+        print(index_start, index_end)
+        return data[index_start:index_end + 1]
+
+    def execute_strategy(self, strategy, data, start, end, initial_cash=100000, plot=False):
+        assert start.tzinfo is not None, 'The start date should be timezone aware'
+        assert end.tzinfo is not None, 'The end date should be timezone aware'
+
+        self.state['cash'] = initial_cash
 
         portfolio_data = []
 
-        for index, row in data.iterrows():
-            utc_t = datetime.fromtimestamp(row['t'] / 1000, utc)
+        # Timestamps in the interval
+        timestamps_ms = self.filter_data(data, start, end).index
 
-            check_order_execution(utc_t, row)
+        for timestamp_ms in timestamps_ms:
+            utc_t = datetime.fromtimestamp(timestamp_ms / 1000, utc)
+            filtered_data = self.filter_data(data, start, utc_t, False)
 
-            strategy(lambda *args, **kw: request_new_order(utc_t, *args, **kw), row, state['cash'])
+            latest_interval = get_values_at_timestamp(data, timestamp_ms)
+            assert latest_interval is not None
 
-            today_portfolio_value = portfolio_value(row)
+            self.check_order_execution(utc_t, latest_interval)
+
+            if len(filtered_data) > 0:
+                strategy(utc_t, lambda *args, **kw: self.request_new_order(utc_t,
+                                                                           *args, **kw), filtered_data, self.state['cash'])
+
+            today_portfolio_value = self.portfolio_value(latest_interval)
             today_portfolio_value['t'] = utc_t
             portfolio_data.append(today_portfolio_value)
+        print(timestamps_ms)
 
         portfolio_data_frame = DataFrame(portfolio_data)
 
-        print(portfolio_data_frame)
-        ax = plt.gca()
-        portfolio_data_frame.plot(kind='line', x='t', y='low', color='blue', ax=ax)
-        plt.show()
+        if plot:
+            ax = plt.gca()
+            portfolio_data_frame.plot(
+                kind='line', x='t', y='low', color='blue', ax=ax)
+            plt.show()
 
         return portfolio_data_frame
