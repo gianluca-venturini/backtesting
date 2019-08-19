@@ -6,7 +6,8 @@ from pandas import DataFrame
 import matplotlib.pyplot as plt
 from bisect import bisect_left, bisect_right
 from util.dataframe_util import get_values_at_timestamp
-
+import os
+import binascii
 
 class SimpleExecutor:
     # Orders should follow this format
@@ -34,14 +35,46 @@ class SimpleExecutor:
     #   "status": "accepted",
     #   "extended_hours": false
     # }
+
+    # Positions should follow this format
+    # {
+    #     "asset_id": "904837e3-3b76-47ec-b432-046db621571b",
+    #     "symbol": "AAPL",
+    #     "exchange": "NASDAQ",
+    #     "asset_class": "us_equity",
+    #     "avg_entry_price": 100.0,
+    #     "qty": 5,
+    #     "side": "long",
+    #     "market_value": 600.0,
+    #     "cost_basis": 500.0,
+    #     "unrealized_pl": 100.0,
+    #     "unrealized_plpc": 0.20,
+    #     "unrealized_intraday_pl": 10.0,
+    #     "unrealized_intraday_plpc": 0.0084,
+    #     "current_price": 120.0,
+    #     "lastday_price": 119.0,
+    #     "change_today": 0.0084
+    # }
     def __init__(self):
+        self.reset()
+
+    def reset(self):
         self.state = {
             # All orders
             'orders': [],
+            # All positions index by symbol
+            'positions': defaultdict(lambda: {
+                'asset_id': binascii.hexlify(os.urandom(8)),
+                'exchange': 'NASDAQ',
+                'asset_class': 'us_equity',
+                'qty': 0
+            }),
             # Initial cash
             'cash': 0,
-            'portfolio': defaultdict(lambda: 0)
         }
+
+    def set_cash(self, cash):
+        self.state['cash'] = cash
 
     def request_new_order(self, time, symbol, qty, side, type, time_in_force, limit_price, stop_price, extended_hours, client_order_id):
         assert side in ('buy', 'sell')
@@ -101,8 +134,7 @@ class SimpleExecutor:
                     self.execute_order(time, order, order['limit_price'])
 
     def execute_order(self, time, order, price):
-        print('Execute order {client_order_id} at {price}'.format(
-            **order, price=price))
+        print('Execute order {client_order_id} at {price}'.format(**order, price=price))
         order['status'] = 'filled'
         order['filled_avg_price'] = price
         order['filled_at'] = time
@@ -110,18 +142,15 @@ class SimpleExecutor:
 
         if order['side'] == 'buy':
             self.state['cash'] -= price * order['qty']
-            self.state['portfolio'][order['symbol']] += order['qty']
+            self.update_position(order['symbol'], order['qty'])
         if order['side'] == 'sell':
             self.state['cash'] += price * order['qty']
-            self.state['portfolio'][order['symbol']] -= order['qty']
+            self.update_position(order['symbol'], -order['qty'])
 
         print('Cash remaining {cash}'.format(**self.state))
 
         if self.state['cash'] < 0:
             raise Exception('Cash is below zero')
-        if self.state['portfolio'][order['symbol']] < 0:
-            raise Exception('Symbol {symbol} is below zero {current}'.format(
-                **order, current=self.state['portfolio'][order['symbol']]))
 
     def cancel_order(self, time, order):
         order['status'] = 'canceled'
@@ -131,19 +160,38 @@ class SimpleExecutor:
         order['status'] = 'expired'
         order['expired_at'] = time
 
+    def update_position(self, symbol, delta_qty):
+        position = self.state['positions'][symbol]
+        position['symbol'] = symbol
+        qty = position['qty'] + delta_qty
+        position['qty'] = abs(qty)
+        position['side'] = 'long' if qty >= 0 else 'short'
+
+        # Unsupported attributes - this are not relevant for simple analysis
+        position['avg_entry_price'] = None
+        position['market_value'] = None
+        position['cost_basis'] = None
+        position['unrealized_pl'] = None
+        position['unrealized_plpc'] = None
+        position['unrealized_intraday_pl'] = None
+        position['unrealized_intraday_plpc'] = None
+        position['current_price'] = None
+        position['lastday_price'] = None
+        position['change_today'] = None
+
     def portfolio_value(self, last_interval):
         high = 0
         low = 0
         open = 0
         close = 0
-        for symbol in self.state['portfolio']:
+        for symbol in self.state['positions']:
             high += last_interval['h'][symbol] * \
-                self.state['portfolio'][symbol]
-            low += last_interval['l'][symbol] * self.state['portfolio'][symbol]
+                self.state['positions'][symbol]['qty']
+            low += last_interval['l'][symbol] * self.state['positions'][symbol]['qty']
             open += last_interval['o'][symbol] * \
-                self.state['portfolio'][symbol]
+                self.state['positions'][symbol]['qty']
             close += last_interval['c'][symbol] * \
-                self.state['portfolio'][symbol]
+                self.state['positions'][symbol]['qty']
         cash = self.state['cash']
         return dict(high=high + cash, low=low + cash, open=open + cash, close=close + cash, cash=cash)
 
@@ -162,11 +210,9 @@ class SimpleExecutor:
         assert index_end >= -1
         return data[index_start:index_end + 1]
 
-    def execute_strategy(self, strategy, data, start, end, initial_cash=100000, plot=False):
+    def execute_strategy(self, strategy, data, start, end, plot=False):
         assert start.tzinfo is not None, 'The start date should be timezone aware'
         assert end.tzinfo is not None, 'The end date should be timezone aware'
-
-        self.state['cash'] = initial_cash
 
         portfolio_data = []
 
@@ -175,16 +221,16 @@ class SimpleExecutor:
 
         for timestamp_ms in timestamps_ms:
             utc_t = datetime.fromtimestamp(timestamp_ms / 1000, utc)
-            filtered_data = self.filter_data(data, start, utc_t, False)
+            filtered_historical_data = self.filter_data(data, start, utc_t, False)
 
             latest_interval = get_values_at_timestamp(data, timestamp_ms)
             assert latest_interval is not None
+            current_data = {symbol:latest_interval['o'][symbol] for symbol in latest_interval['o']}
+
+            if len(filtered_historical_data) > 0:
+                strategy(utc_t, lambda *args, **kw: self.request_new_order(utc_t, *args, **kw), filtered_historical_data, current_data, self.state['positions'], self.state['cash'])
 
             self.check_orders_execution(utc_t, latest_interval)
-
-            if len(filtered_data) > 0:
-                strategy(utc_t, lambda *args, **kw: self.request_new_order(utc_t,
-                                                                           *args, **kw), filtered_data, self.state['cash'])
 
             today_portfolio_value = self.portfolio_value(latest_interval)
             today_portfolio_value['t'] = utc_t
