@@ -1,6 +1,4 @@
-import os
 import requests
-import pickle
 from datetime import datetime
 from pandas import DataFrame, HDFStore, concat, pivot
 from util.cache_util import get_cached_dataframe, get_cached_dict
@@ -87,7 +85,7 @@ def get_tickers(type, market, api_key):
             assert len(tickers_dict['tickers']) > 0
             return tickers_dict
 
-        tickers_dict = get_cached_dict('get_tickers', '{version}_{type}_{market}_{page}'.format(version=1, type=type, market=market, page=page), get_page)
+        tickers_dict = get_cached_dict('get_tickers', '{version}_{type}_{market}_{page}'.format(version=2, type=type, market=market, page=page), get_page)
         for ticker in tickers_dict['tickers']:
             tickers.add(ticker['ticker'])
         print('Page {page}, number of tickers: {num_tickers}/{total_tickers}'.format(page=page, num_tickers=len(tickers), total_tickers=tickers_dict['count']))
@@ -109,7 +107,7 @@ def get_stocks_aggregate_data(interval, start, end, api_key):
     for symbol in symbols:
         print('Get aggreagate data for symbol {}'.format(symbol))
         dfs.append(get_aggregate_symbol(symbol, interval, start, end, api_key))
-    data_concat = concat(dfs)
+    data_concat = concat(dfs, sort=False)
     # Creates one row per timestamp
     data_pivoted = pivot(data_concat, index='t', columns='symbol')
     return data_pivoted

@@ -30,9 +30,13 @@ pipenv lock
 
 `docker run --rm -p 8888:8888 gianluca91/backtesting`
 
-### Run the container mounting the volume
+### Run the container mounting source and notebooks volumes
 
-`docker run --rm -p 8888:8888 --mount src="$(pwd)/src",target=/lib/src,type=bind gianluca91/backtesting`
+`docker run --rm -p 8888:8888 --mount src="$(pwd)/src",target=/lib/src,type=bind --mount src="$(pwd)/notebooks",target=/home/jovyan/work,type=bind gianluca91/backtesting`
+
+If you want to persist the cached results you can persist the cache directory you can add:
+
+`--mount src="/local/path",target=/tmp/cache,type=bind`
 
 ### Push the container to Docker Hub
 
