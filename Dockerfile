@@ -1,12 +1,14 @@
 FROM jupyter/base-notebook:notebook-6.0.0
 
+RUN mkdir /tmp/config
+COPY Pipfile /tmp/config
+COPY Pipfile.lock /tmp/config
 
-COPY Pipfile ~/
-COPY Pipfile.lock ~/
-
-WORKDIR ~/
+WORKDIR /tmp/config
 RUN pip install pipenv
-RUN pipenv install
+RUN pipenv install --system
+
+WORKDIR $HOME
 
 # COPY ./src/ /lib/src
 VOLUME ["/lib/src"]

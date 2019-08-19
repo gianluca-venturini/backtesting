@@ -6,7 +6,7 @@ Make sure to have installed Python3.
 
 ```
 pip3 install pipenv
-pipenv install
+pipenv sync
 ```
 
 ### Write tests
