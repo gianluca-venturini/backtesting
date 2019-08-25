@@ -13,4 +13,7 @@ WORKDIR $HOME
 # COPY ./src/ /lib/src
 VOLUME ["/lib/src"]
 
+RUN mkdir /tmp/cache
+RUN chmod a+w /tmp/cache
+
 ENV PYTHONPATH "${PYTHONPATH}:/lib/src"

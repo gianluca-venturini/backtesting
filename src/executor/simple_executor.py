@@ -8,6 +8,7 @@ from bisect import bisect_left, bisect_right
 from util.dataframe_util import get_values_at_timestamp
 import os
 import binascii
+from util.math_util import force_finite
 
 class SimpleExecutor:
     # Orders should follow this format
@@ -185,13 +186,10 @@ class SimpleExecutor:
         open = 0
         close = 0
         for symbol in self.state['positions']:
-            high += last_interval['h'][symbol] * \
-                self.state['positions'][symbol]['qty']
-            low += last_interval['l'][symbol] * self.state['positions'][symbol]['qty']
-            open += last_interval['o'][symbol] * \
-                self.state['positions'][symbol]['qty']
-            close += last_interval['c'][symbol] * \
-                self.state['positions'][symbol]['qty']
+            high += force_finite(last_interval['h'][symbol]) * self.state['positions'][symbol]['qty']
+            low += force_finite(last_interval['l'][symbol]) * self.state['positions'][symbol]['qty']
+            open += force_finite(last_interval['o'][symbol]) * self.state['positions'][symbol]['qty']
+            close += force_finite(last_interval['c'][symbol]) * self.state['positions'][symbol]['qty']
         cash = self.state['cash']
         return dict(high=high + cash, low=low + cash, open=open + cash, close=close + cash, cash=cash)
 
@@ -204,11 +202,14 @@ class SimpleExecutor:
         # bisect_right returns the index after the found element
         index_start = bisect_right(data.index, timestamp_start * 1000) - 1
         index_end = bisect_left(data.index, timestamp_end * 1000)
+        print(data.index, timestamp_end)
         if include_end is False and data.index[index_end] / 1000 == timestamp_end:
             index_end -= 1
-        assert index_start >= 0
-        assert index_end >= -1
-        return data[index_start:index_end + 1]
+        assert index_start >= 0, 'index_start too low {}'.format(index_start)
+        assert index_end >= -1, 'index_end too low {}'.format(index_end)
+        assert index_start < len(data.index), 'index_start too high {}'.format(index_start)
+        assert index_end < len(data.index), 'index_end too high {}'.format(index_end)
+        return data.iloc[index_start:index_end + 1]
 
     def execute_strategy(self, strategy, data, start, end, plot=False):
         assert start.tzinfo is not None, 'The start date should be timezone aware'
@@ -235,7 +236,6 @@ class SimpleExecutor:
             today_portfolio_value = self.portfolio_value(latest_interval)
             today_portfolio_value['t'] = utc_t
             portfolio_data.append(today_portfolio_value)
-        print(timestamps_ms)
 
         portfolio_data_frame = DataFrame(portfolio_data)
 
